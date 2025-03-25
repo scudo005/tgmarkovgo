@@ -1,6 +1,6 @@
 module github.com/itsByte/tgmarkovgo
 
-go 1.22
+go 1.24
 
 require (
 	github.com/itsByte/gomarkov v0.0.0-20240904103054-abb6a3e420a7
