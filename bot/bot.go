@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"math/rand/v2"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -18,7 +19,10 @@ var (
 	ReplyChance = flag.Float64("replyChance", 0.6, "Sets replyChance variable, 0-1")
 )
 
-func doesReply(context tele.Context) bool {
+func doesReply(context tele.Context, mutedChats []int64) bool {
+	if slices.Contains(mutedChats, context.Chat().ID) {
+		return false
+	}
 	willReply := rand.Float64() < *ReplyChance
 	isReply := context.Message().IsReply()
 	var isMe bool
@@ -54,8 +58,8 @@ func processGen(co backend.ChainOutput) any {
 	}
 }
 
-func handleMessage(t backend.Tables, context tele.Context) error {
-	if doesReply(context) {
+func handleMessage(t backend.Tables, context tele.Context, mutedChats []int64) error {
+	if doesReply(context, mutedChats) {
 		co, err := backend.GenerateMessage(t, context)
 		if err != nil {
 			slog.Error("Error", "Code", err)
@@ -73,6 +77,14 @@ func handleMessage(t backend.Tables, context tele.Context) error {
 	return nil
 }
 
+func removeMute(mutedChats []int64, cID int64) {
+	i := slices.Index(mutedChats, cID)
+	if i != -1 {
+		mutedChats = slices.Delete(mutedChats, i, i+1)
+	}
+	slog.Info("Unmuting chat", "chatID", cID)
+}
+
 func Init(t backend.Tables) {
 	pref := tele.Settings{
 		Token:       os.Getenv("TOKEN"),
@@ -84,6 +96,8 @@ func Init(t backend.Tables) {
 		slog.Error("Error", "Code", err)
 		os.Exit(1)
 	}
+
+	mutedChats := make([]int64, 0)
 
 	b.Handle("/generate", func(c tele.Context) error {
 		co, err := backend.GenerateMessage(t, c)
@@ -98,13 +112,31 @@ func Init(t backend.Tables) {
 		return c.Send("Hi!")
 	})
 
+	b.Handle("/shut", func(c tele.Context) error {
+		if !slices.Contains(mutedChats, c.Chat().ID) {
+			mutedChats = append(mutedChats, c.Chat().ID)
+		}
+		rTimer := time.NewTimer(30 * time.Minute)
+		go func() {
+			<-rTimer.C
+			removeMute(mutedChats, c.Chat().ID)
+		}()
+		slog.Info("Muting chat", "chatID", c.Chat().ID)
+		return c.Reply("meow...")
+	})
+
+	b.Handle("/unshut", func(c tele.Context) error {
+		removeMute(mutedChats, c.Chat().ID)
+		return c.Reply("yay")
+	})
+
 	b.Handle(tele.OnText, func(context tele.Context) error {
 		err := backend.ProcessMessage(t, context, "\u001F_TEXT")
 		if err != nil {
 			slog.Error("Error", "Code", err)
 			return err
 		}
-		return handleMessage(t, context)
+		return handleMessage(t, context, mutedChats)
 	})
 
 	b.Handle(tele.OnPhoto, func(context tele.Context) error {
@@ -113,7 +145,7 @@ func Init(t backend.Tables) {
 			slog.Error("Error", "Code", err)
 			return err
 		}
-		return handleMessage(t, context)
+		return handleMessage(t, context, mutedChats)
 	})
 
 	b.Handle(tele.OnAnimation, func(context tele.Context) error {
@@ -122,7 +154,7 @@ func Init(t backend.Tables) {
 			slog.Error("Error", "Code", err)
 			return err
 		}
-		return handleMessage(t, context)
+		return handleMessage(t, context, mutedChats)
 	})
 
 	b.Handle(tele.OnSticker, func(context tele.Context) error {
@@ -131,7 +163,7 @@ func Init(t backend.Tables) {
 			slog.Error("Error", "Code", err)
 			return err
 		}
-		return handleMessage(t, context)
+		return handleMessage(t, context, mutedChats)
 	})
 
 	b.Start()
