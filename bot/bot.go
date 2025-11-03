@@ -19,10 +19,7 @@ var (
 	ReplyChance = flag.Float64("replyChance", 0.6, "Sets replyChance variable, 0-1")
 )
 
-func doesReply(context tele.Context, mutedChats []int64) bool {
-	if slices.Contains(mutedChats, context.Chat().ID) {
-		return false
-	}
+func doesReply(context tele.Context) bool {
 	willReply := rand.Float64() < *ReplyChance
 	isReply := context.Message().IsReply()
 	var isMe bool
@@ -59,7 +56,10 @@ func processGen(co backend.ChainOutput) any {
 }
 
 func handleMessage(t backend.Tables, context tele.Context, mutedChats []int64) error {
-	if doesReply(context, mutedChats) {
+	if slices.Contains(mutedChats, context.Chat().ID) {
+		return nil
+	}
+	if doesReply(context) {
 		co, err := backend.GenerateMessage(t, context)
 		if err != nil {
 			slog.Error("Error", "Code", err)
